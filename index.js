@@ -1,6 +1,8 @@
 require('dotenv').config();
 
 const express = require('express');
+const { conectar, desconectar } = require('./src/db');
+const tokenStore = require('./src/tokenStore');
 const { anonimizarMensaje, desanonimizarMensaje } = require('./src/anonymizer');
 
 const app = express();
@@ -45,10 +47,9 @@ function validarStringNoVacio(valor, nombreCampo) {
 
 /**
  * POST /anonymize
- * Recibe un mensaje con PII y responde con la versión anonimizada.
- * Body esperado: { "message": "texto con nombres, emails y teléfonos" }
+ * Recibe un mensaje con PII, lo anonimiza y persiste las parejas en MongoDB.
  */
-app.post('/anonymize', (req, res) => {
+app.post('/anonymize', async (req, res) => {
   try {
     const { message } = req.body ?? {};
     const validacion = validarStringNoVacio(message, 'message');
@@ -57,11 +58,11 @@ app.post('/anonymize', (req, res) => {
       return res.status(validacion.status).json({ error: validacion.error });
     }
 
-    const anonymizedMessage = anonimizarMensaje(message);
+    const anonymizedMessage = await anonimizarMensaje(message);
 
     return res.status(200).json({ anonymizedMessage });
   } catch (error) {
-    console.error('Error al anonimizar el mensaje:', error);
+    console.error('Error al anonimizar el mensaje.');
 
     return res.status(500).json({
       error: 'Ocurrió un error interno al anonimizar el mensaje.',
@@ -71,10 +72,9 @@ app.post('/anonymize', (req, res) => {
 
 /**
  * POST /deanonymize
- * Recibe un mensaje anonimizado y restaura el PII conocido desde el almacén.
- * Body esperado: { "anonymizedMessage": "texto con tokens NAME_/EMAIL_/PHONE_" }
+ * Restaura el PII conocido leyendo los tokens desde MongoDB.
  */
-app.post('/deanonymize', (req, res) => {
+app.post('/deanonymize', async (req, res) => {
   try {
     const { anonymizedMessage } = req.body ?? {};
     const validacion = validarStringNoVacio(anonymizedMessage, 'anonymizedMessage');
@@ -83,11 +83,11 @@ app.post('/deanonymize', (req, res) => {
       return res.status(validacion.status).json({ error: validacion.error });
     }
 
-    const message = desanonimizarMensaje(anonymizedMessage);
+    const message = await desanonimizarMensaje(anonymizedMessage);
 
     return res.status(200).json({ message });
   } catch (error) {
-    console.error('Error al desanonimizar el mensaje:', error);
+    console.error('Error al desanonimizar el mensaje.');
 
     return res.status(500).json({
       error: 'Ocurrió un error interno al desanonimizar el mensaje.',
@@ -112,12 +112,47 @@ app.use((err, req, res, next) => {
     });
   }
 
-  console.error('Error no controlado:', err);
+  console.error('Error no controlado en el servidor.');
   return res.status(500).json({
     error: 'Ocurrió un error interno en el servidor.',
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Privacy Vault escuchando en http://localhost:${PORT}`);
+/**
+ * Arranca la app: primero MongoDB e índices, luego el puerto HTTP.
+ */
+async function iniciar() {
+  await conectar();
+  await tokenStore.asegurarIndices();
+
+  const servidor = app.listen(PORT, () => {
+    console.log(`Privacy Vault escuchando en http://localhost:${PORT}`);
+  });
+
+  /**
+   * Cierre ordenado al recibir Ctrl+C o SIGTERM.
+   */
+  const apagar = async (senal) => {
+    console.log(`Señal ${senal} recibida. Cerrando aplicación...`);
+
+    servidor.close(async () => {
+      try {
+        await desconectar();
+      } finally {
+        process.exit(0);
+      }
+    });
+  };
+
+  process.on('SIGINT', () => {
+    apagar('SIGINT');
+  });
+  process.on('SIGTERM', () => {
+    apagar('SIGTERM');
+  });
+}
+
+iniciar().catch(() => {
+  console.error('Error: la aplicación no pudo iniciarse.');
+  process.exit(1);
 });

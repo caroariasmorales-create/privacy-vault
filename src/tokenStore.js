@@ -1,41 +1,70 @@
+const { obtenerDb } = require('./db');
+
+const NOMBRE_COLECCION = 'tokens';
+
 /**
- * Almacén en memoria de parejas token → valor original.
- * Está aislado en este módulo para poder sustituirlo después
- * por una base de datos sin cambiar anonymizer ni las rutas.
+ * Acceso a la colección "tokens".
+ * @returns {import('mongodb').Collection}
  */
-
-/** @type {Map<string, string>} */
-const almacen = new Map();
+function coleccion() {
+  return obtenerDb().collection(NOMBRE_COLECCION);
+}
 
 /**
- * Guarda (o actualiza) la asociación token → valor original.
+ * Crea el índice único sobre "token" (idempotente si ya existe).
+ */
+async function asegurarIndices() {
+  await coleccion().createIndex({ token: 1 }, { unique: true });
+}
+
+/**
+ * Guarda la pareja token → valor con upsert.
+ * Si el token ya existe, $setOnInsert no modifica el documento (evita duplicados).
  * @param {string} token - Token generado (p. ej. NAME_e1be92e2b3a5).
- * @param {string} valorOriginal - PII original que reemplazó el token.
+ * @param {string} value - Valor original de PII.
+ * @param {'NAME'|'EMAIL'|'PHONE'} type - Tipo de dato privado.
  */
-function guardar(token, valorOriginal) {
-  almacen.set(token, valorOriginal);
+async function guardar(token, value, type) {
+  await coleccion().updateOne(
+    { token },
+    {
+      $setOnInsert: {
+        token,
+        value,
+        type,
+        createdAt: new Date(),
+      },
+    },
+    { upsert: true }
+  );
 }
 
 /**
- * Recupera el valor original asociado a un token, si existe.
- * @param {string} token - Token a buscar.
- * @returns {string|undefined} Valor original o undefined si no está guardado.
+ * Busca varios tokens en una sola consulta y devuelve un mapa token → value.
+ * @param {string[]} tokens - Lista de tokens encontrados en el mensaje.
+ * @returns {Promise<Map<string, string>>}
  */
-function obtener(token) {
-  return almacen.get(token);
-}
+async function obtenerVarios(tokens) {
+  const mapa = new Map();
 
-/**
- * Indica si el almacén conoce el token.
- * @param {string} token - Token a consultar.
- * @returns {boolean}
- */
-function existe(token) {
-  return almacen.has(token);
+  if (!tokens || tokens.length === 0) {
+    return mapa;
+  }
+
+  const documentos = await coleccion()
+    .find({ token: { $in: tokens } })
+    .project({ token: 1, value: 1, _id: 0 })
+    .toArray();
+
+  for (const doc of documentos) {
+    mapa.set(doc.token, doc.value);
+  }
+
+  return mapa;
 }
 
 module.exports = {
+  asegurarIndices,
   guardar,
-  obtener,
-  existe,
+  obtenerVarios,
 };

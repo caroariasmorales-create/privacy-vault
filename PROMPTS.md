@@ -57,3 +57,22 @@ Ajustes necesarios para este paso:
 - Valida que anonymizedMessage sea un string no vacío y responde errores en JSON.
 - No modifiques .gitignore, .env ni .env.example. En PROMPTS.md agrega este prompt textual bajo "Actividad 1 – Endpoint deanonymize".
 - Responde en español y explícame qué cambiaste y por qué la desanonimización necesita guardar las parejas.
+
+### Actividad 2 – Persistencia con MongoDB
+
+Ahora vamos con la Actividad 2: añade persistencia en MongoDB para almacenar las parejas [información privada, token].
+
+Contexto: el proyecto ya tiene /anonymize y /deanonymize funcionando, con las parejas guardadas en memoria en src/tokenStore.js. La cadena de conexión de MongoDB Atlas ya está en .env como MONGODB_URI.
+
+Requisitos:
+- Usa el driver oficial "mongodb" para Node.js (instálalo con npm). No uses mongoose.
+- Crea src/db.js para conectar con MONGODB_URI, usando la base de datos "privacy_vault". Si MONGODB_URI no existe o la conexión falla, muestra un error claro en consola y detén la aplicación.
+- Reescribe src/tokenStore.js para que use la colección "tokens" en lugar del Map en memoria. Cada documento: { token, value, type ("NAME", "EMAIL" o "PHONE"), createdAt }.
+- Crea un índice único sobre "token" y guarda con upsert ($setOnInsert) para evitar duplicados si el mismo dato se anonimiza varias veces.
+- En deanonymize, busca todos los tokens del mensaje en una sola consulta ($in) y reemplaza los que existan; los que no existan se dejan igual.
+- Ajusta src/anonymizer.js e index.js solo lo necesario para que las funciones sean async. El servidor debe conectarse a MongoDB antes de empezar a escuchar en el puerto y cerrar la conexión al detenerse con Ctrl+C.
+- No cambies el formato de los tokens ni las expresiones regulares.
+- No modifiques .gitignore ni .env. En .env.example no agregues valores reales. En PROMPTS.md agrega este prompt textual bajo "Actividad 2 – Persistencia con MongoDB".
+- Nunca imprimas en consola la cadena de conexión ni los valores privados.
+- No ejecutes el servidor; yo lo probaré.
+- Responde en español y explícame qué archivos cambiaste, cómo se relaciona cada documento de MongoDB con su token y qué pasaría si se anonimiza dos veces el mismo dato.

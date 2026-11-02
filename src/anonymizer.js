@@ -14,88 +14,108 @@ function generarToken(valor, prefijo) {
 }
 
 /**
- * Genera el token, lo guarda en el almacén y lo devuelve.
+ * Genera el token, lo persiste en MongoDB y lo devuelve.
  * @param {string} valor - PII original.
  * @param {'NAME'|'EMAIL'|'PHONE'} prefijo - Tipo de PII.
- * @returns {string} Token persistido en memoria.
+ * @returns {Promise<string>} Token persistido.
  */
-function tokenizarYGuardar(valor, prefijo) {
+async function tokenizarYGuardar(valor, prefijo) {
   const token = generarToken(valor, prefijo);
-  tokenStore.guardar(token, valor);
+  await tokenStore.guardar(token, valor, prefijo);
   return token;
+}
+
+/**
+ * Reemplaza coincidencias de una regex de forma asíncrona.
+ * Primero resuelve los tokens únicos y luego aplica un replace síncrono.
+ * @param {string} texto - Texto de entrada.
+ * @param {RegExp} regex - Expresión regular con flag g.
+ * @param {'NAME'|'EMAIL'|'PHONE'} tipo - Tipo de PII a tokenizar.
+ * @returns {Promise<string>}
+ */
+async function reemplazarConTokens(texto, regex, tipo) {
+  const coincidencias = [...texto.matchAll(regex)];
+  if (coincidencias.length === 0) {
+    return texto;
+  }
+
+  /** @type {Map<string, string>} */
+  const mapa = new Map();
+
+  for (const coincidencia of coincidencias) {
+    const valor = coincidencia[0];
+    if (!mapa.has(valor)) {
+      mapa.set(valor, await tokenizarYGuardar(valor, tipo));
+    }
+  }
+
+  // Reinicia lastIndex tras matchAll para que replace vuelva a recorrer el texto
+  regex.lastIndex = 0;
+  return texto.replace(regex, (valor) => mapa.get(valor));
 }
 
 /**
  * Detecta y reemplaza correos electrónicos por tokens EMAIL_.
  * @param {string} texto - Mensaje a procesar.
- * @returns {string} Texto con emails anonimizados.
+ * @returns {Promise<string>}
  */
-function anonimizarEmails(texto) {
-  // \b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b → usuario@dominio.tld
+async function anonimizarEmails(texto) {
   const regexEmail = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
-
-  return texto.replace(regexEmail, (email) => tokenizarYGuardar(email, 'EMAIL'));
+  return reemplazarConTokens(texto, regexEmail, 'EMAIL');
 }
 
 /**
  * Detecta y reemplaza números telefónicos por tokens PHONE_.
  * @param {string} texto - Mensaje a procesar.
- * @returns {string} Texto con teléfonos anonimizados.
+ * @returns {Promise<string>}
  */
-function anonimizarTelefonos(texto) {
-  // \b\d{7,15}\b → de 7 a 15 dígitos consecutivos
+async function anonimizarTelefonos(texto) {
   const regexTelefono = /\b\d{7,15}\b/g;
-
-  return texto.replace(regexTelefono, (telefono) =>
-    tokenizarYGuardar(telefono, 'PHONE')
-  );
+  return reemplazarConTokens(texto, regexTelefono, 'PHONE');
 }
 
 /**
  * Detecta y reemplaza nombres propios por un solo token NAME_ por grupo.
- * Varias palabras consecutivas con mayúscula inicial cuentan como un nombre.
  * @param {string} texto - Mensaje a procesar.
- * @returns {string} Texto con nombres anonimizados.
+ * @returns {Promise<string>}
  */
-function anonimizarNombres(texto) {
-  // Una o más palabras: Mayúscula + minúsculas (con acentos), separadas por espacio.
-  // "Dago Borda" → una sola coincidencia → un solo NAME_…
+async function anonimizarNombres(texto) {
   const regexNombre =
     /\b[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+(?:\s+[A-ZÁÉÍÓÚÑÜ][a-záéíóúñü]+)*\b/g;
-
-  return texto.replace(regexNombre, (nombre) => tokenizarYGuardar(nombre, 'NAME'));
+  return reemplazarConTokens(texto, regexNombre, 'NAME');
 }
 
 /**
- * Anonimiza PII en un mensaje y registra cada token en el almacén.
- * Orden: emails → teléfonos → nombres (evita falsos positivos).
+ * Anonimiza PII en un mensaje y registra cada token en MongoDB.
+ * Orden: emails → teléfonos → nombres.
  * @param {string} mensaje - Texto original con posible PII.
- * @returns {string} Mensaje anonimizado.
+ * @returns {Promise<string>} Mensaje anonimizado.
  */
-function anonimizarMensaje(mensaje) {
+async function anonimizarMensaje(mensaje) {
   let resultado = mensaje;
 
-  resultado = anonimizarEmails(resultado);
-  resultado = anonimizarTelefonos(resultado);
-  resultado = anonimizarNombres(resultado);
+  resultado = await anonimizarEmails(resultado);
+  resultado = await anonimizarTelefonos(resultado);
+  resultado = await anonimizarNombres(resultado);
 
   return resultado;
 }
 
 /**
- * Restaura los valores originales a partir de tokens conocidos.
- * Los tokens que no estén en el almacén se dejan igual.
+ * Restaura los valores originales consultando todos los tokens en una sola query ($in).
+ * Los tokens desconocidos se dejan sin cambios.
  * @param {string} mensajeAnonimo - Texto con tokens NAME_/EMAIL_/PHONE_.
- * @returns {string} Mensaje desanonimizado (parcial o total).
+ * @returns {Promise<string>} Mensaje desanonimizado.
  */
-function desanonimizarMensaje(mensajeAnonimo) {
-  // NAME_|EMAIL_|PHONE_ seguido de exactamente 12 hexadecimales
+async function desanonimizarMensaje(mensajeAnonimo) {
   const regexToken = /\b(?:NAME|EMAIL|PHONE)_[a-f0-9]{12}\b/g;
+  const tokens = [...mensajeAnonimo.matchAll(regexToken)].map((m) => m[0]);
+  const mapa = await tokenStore.obtenerVarios(tokens);
 
-  return mensajeAnonimo.replace(regexToken, (token) => {
-    const original = tokenStore.obtener(token);
-    return original !== undefined ? original : token;
-  });
+  regexToken.lastIndex = 0;
+  return mensajeAnonimo.replace(regexToken, (token) =>
+    mapa.has(token) ? mapa.get(token) : token
+  );
 }
 
 module.exports = {
