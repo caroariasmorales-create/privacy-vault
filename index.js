@@ -4,9 +4,17 @@ const express = require('express');
 const { conectar, desconectar } = require('./src/db');
 const tokenStore = require('./src/tokenStore');
 const { anonimizarMensaje, desanonimizarMensaje } = require('./src/anonymizer');
+const { OpenAIService } = require('./src/openaiService');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+/** @type {InstanceType<typeof OpenAIService>|undefined} */
+let openaiService;
+
+/** Instrucciones para que el modelo preserve los tokens de PII sin alterarles. */
+const INSTRUCCIONES_TOKENS =
+  'El texto contiene tokens con el formato NAME_xxxxxxxxxxxx, EMAIL_xxxxxxxxxxxx y PHONE_xxxxxxxxxxxx que reemplazan datos personales. Cuando necesites referirte a esos datos, copia los tokens exactamente igual, sin modificarlos, traducirlos ni explicarlos.';
 
 // Permite recibir cuerpos JSON en las peticiones
 app.use(express.json());
@@ -95,6 +103,58 @@ app.post('/deanonymize', async (req, res) => {
   }
 });
 
+/**
+ * POST /secureChatGPT
+ * Anonimiza el prompt, lo envía a OpenAI, desanonimiza la respuesta y la devuelve.
+ * Body: { "prompt": "..." } → { "response": "..." }
+ */
+app.post('/secureChatGPT', async (req, res) => {
+  try {
+    const { prompt } = req.body ?? {};
+    const validacion = validarStringNoVacio(prompt, 'prompt');
+
+    if (!validacion.ok) {
+      return res.status(validacion.status).json({ error: validacion.error });
+    }
+
+    const promptAnonimo = await anonimizarMensaje(prompt);
+    console.log(
+      '[secureChatGPT] Prompt anonimizado enviado a OpenAI:',
+      promptAnonimo
+    );
+
+    let respuestaAnonima;
+    try {
+      respuestaAnonima = await openaiService.generarRespuesta(
+        promptAnonimo,
+        INSTRUCCIONES_TOKENS
+      );
+    } catch (errorOpenAI) {
+      console.error('[secureChatGPT] Falló la llamada a OpenAI.');
+      return res.status(502).json({
+        error:
+          errorOpenAI.message ||
+          'No se pudo obtener una respuesta de OpenAI.',
+      });
+    }
+
+    console.log(
+      '[secureChatGPT] Respuesta anonimizada recibida de OpenAI:',
+      respuestaAnonima
+    );
+
+    const response = await desanonimizarMensaje(respuestaAnonima);
+
+    return res.status(200).json({ response });
+  } catch (error) {
+    console.error('Error en /secureChatGPT.');
+
+    return res.status(500).json({
+      error: 'Ocurrió un error interno al procesar secureChatGPT.',
+    });
+  }
+});
+
 // Ruta no encontrada
 app.use((req, res) => {
   res.status(404).json({
@@ -124,6 +184,9 @@ app.use((err, req, res, next) => {
 async function iniciar() {
   await conectar();
   await tokenStore.asegurarIndices();
+
+  // Una sola instancia para todo el ciclo de vida del servidor
+  openaiService = new OpenAIService();
 
   const servidor = app.listen(PORT, () => {
     console.log(`Privacy Vault escuchando en http://localhost:${PORT}`);

@@ -76,3 +76,58 @@ Requisitos:
 - Nunca imprimas en consola la cadena de conexión ni los valores privados.
 - No ejecutes el servidor; yo lo probaré.
 - Responde en español y explícame qué archivos cambiaste, cómo se relaciona cada documento de MongoDB con su token y qué pasaría si se anonimiza dos veces el mismo dato.
+
+### Actividad 3 – Clase de conexión con OpenAI
+
+Ahora vamos con la Actividad 3. Primer paso: créame una clase para conectarme con OpenAI y hacer un text completion.
+
+Requisitos:
+- Instala el SDK oficial "openai" con npm. El proyecto usa CommonJS (require).
+- Crea src/openaiService.js con una clase OpenAIService que:
+  - Lea OPENAI_API_KEY desde las variables de entorno y lance un error claro si no existe.
+  - Use el modelo definido en la variable OPENAI_MODEL y, si no existe, "gpt-6-luna".
+  - Tenga un método async generarRespuesta(prompt) que use la Responses API actual (client.responses.create con model e input) y devuelva response.output_text.
+  - Limite la salida con max_output_tokens: 1000 para controlar costos.
+  - Maneje errores de la API (llave inválida, sin saldo, límite de solicitudes) con mensajes claros en español, sin imprimir nunca la API key.
+- Crea scripts/probarOpenAI.js: un script corto que cargue dotenv, use la clase con el prompt "Responde en una sola frase: ¿qué es un Data Privacy Vault?" e imprima la respuesta. Agrega en package.json el script "test:openai" para ejecutarlo.
+- Agrega OPENAI_MODEL=gpt-6-luna en .env.example (sin valores secretos). No modifiques .env, .gitignore ni los archivos de anonimización, base de datos o rutas.
+- En PROMPTS.md agrega este prompt textual bajo "Actividad 3 – Clase de conexión con OpenAI".
+- No ejecutes nada; yo lo probaré.
+- Responde en español y explícame qué hace la clase y por qué está separada del resto del código.
+
+### Actividad 3 – Endpoint secureChatGPT
+
+Ahora haz un nuevo endpoint que se llame secureChatGPT. Este debe:
+- Recibir un prompt que tenga información privada (nombres, teléfonos e emails)
+- Anonimizarla usando las funciones ya implementadas
+- Enviar el prompt a ChatGPT usando la clase OpenAIService creada en el paso anterior
+- Recibir la respuesta y desanonimizarla
+- Enviar la respuesta al cliente final
+
+Detalles técnicos:
+- Ruta: POST /secureChatGPT. Body: { "prompt": "..." }. Respuesta: { "response": "..." }.
+- Reutiliza anonimizarMensaje y desanonimizarMensaje de src/anonymizer.js y la clase de src/openaiService.js. No dupliques lógica.
+- Permite que generarRespuesta reciba unas instrucciones opcionales (parámetro instructions de la Responses API). Desde el endpoint envía: "El texto contiene tokens con el formato NAME_xxxxxxxxxxxx, EMAIL_xxxxxxxxxxxx y PHONE_xxxxxxxxxxxx que reemplazan datos personales. Cuando necesites referirte a esos datos, copia los tokens exactamente igual, sin modificarlos, traducirlos ni explicarlos."
+- Imprime en la consola del servidor el prompt anonimizado que se envía a OpenAI y la respuesta anonimizada que llega, con etiquetas claras. Nunca imprimas el prompt original ni la respuesta final desanonimizada.
+- Valida que prompt sea un string no vacío. Si falla OpenAI, responde con código 502 y un mensaje JSON claro.
+- Crea la instancia de OpenAIService una sola vez al iniciar el servidor.
+- No modifiques las expresiones regulares, el formato de tokens, la conexión a MongoDB, .env ni .gitignore.
+- En PROMPTS.md agrega este prompt textual bajo "Actividad 3 – Endpoint secureChatGPT".
+- No ejecutes el servidor.
+- Responde en español y explícame paso a paso cómo circula la información entre el cliente, el vault, MongoDB y OpenAI.
+### Actividad 2 – Diagnóstico del error de conexión
+
+```
+Al ejecutar npm start aparece "Error: no se pudo conectar a MongoDB" sin más detalle. Modifica únicamente src/db.js para que, cuando falle la conexión, imprima también error.name, error.code y error.message, sin imprimir nunca la cadena de conexión ni la contraseña. No cambies nada más y no ejecutes el servidor.
+```
+
+Resultado: el error detallado fue `querySrv ENOTFOUND`, causado por una cadena de conexión copiada con una dirección de ejemplo. Se corrigió copiando la cadena real desde Atlas.
+### Actividad 3 – README
+
+Pídele a cursor que le genere un archivo Readme.md con la descripción del proyecto y los pasos para instalarlo.
+
+Crea README.md en la raíz, en español, con estas secciones: descripción del proyecto (Data Privacy Vault, Taller 2 de Inteligencia Artificial en Negocios Digitales, MaIT Uniandes), objetivo, tecnologías (Node.js, Express, MongoDB Atlas con el driver oficial, SDK de OpenAI con Responses API, dotenv), requisitos previos, instalación (git clone, npm install), configuración de variables de entorno (copiar .env.example a .env y explicar PORT, MONGODB_URI, OPENAI_API_KEY y OPENAI_MODEL, sin valores reales), ejecución (npm start y npm run test:openai), descripción de los tres endpoints con ejemplos curl y respuestas (usa los ejemplos de Dago Borda con los tokens NAME_e1be92e2b3a5, EMAIL_8004719c6ea5 y PHONE_40e83067b9cb), flujo de secureChatGPT, y una sección "Limitaciones conocidas" con estos resultados reales de nuestras pruebas: la regex de nombres tokeniza cualquier palabra con mayúscula inicial ("Su", "Incluye", "Escribe", "Bogota"), lo que degradó las respuestas del modelo; un teléfono con formato "+57 315 231 9157" no fue detectado y llegó sin anonimizar a OpenAI; los valores se guardan en texto claro en MongoDB; los tokens son hash SHA-256 sin clave secreta y pueden recalcularse si se conoce el dato.
+
+Además, revisa PROMPTS.md: verifica que contenga, en orden cronológico, los prompts de Fase 0, Actividad 1 (anonymize y deanonymize), Actividad 2 (persistencia y el prompt de diagnóstico del error de conexión), Actividad 3 (clase OpenAI y secureChatGPT) y este prompt. Agrega este prompt bajo "Actividad 3 – README". Si falta alguno, dime cuál en lugar de inventarlo.
+
+No modifiques código, .env ni .gitignore. No incluyas en ningún archivo la API key, la cadena de conexión ni contraseñas.
