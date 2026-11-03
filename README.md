@@ -1,145 +1,85 @@
-# Data Privacy Vault
+Data Privacy Vault
+Este repositorio es nuestra entrega del Taller 2 de Inteligencia Artificial en Negocios Digitales (Maestría en Gerencia de Tecnologías de la Información, Universidad de los Andes). Lo construimos con Cursor como asistente de programación, a partir del live demo de clase.
 
-Proyecto académico del **Taller 2 de Inteligencia Artificial en Negocios Digitales** (MaIT – Universidad de los Andes).
+La idea es sencilla: antes de mandarle un texto a un modelo de lenguaje, el vault cambia los nombres, correos y teléfonos por tokens. El modelo trabaja solo con esos tokens y, cuando responde, el vault los vuelve a convertir en los datos originales. Así el proveedor externo no recibe la información personal que el vault alcanza a detectar.
 
-Un *Data Privacy Vault* que recibe textos con información personal identificable (PII), la anonimiza con tokens, puede enviarla de forma segura a OpenAI y devolver la respuesta ya desanonimizada al cliente.
+Qué buscábamos comprobar
+Queríamos saber si es técnicamente viable poner una capa de privacidad entre los datos de una organización y un modelo como ChatGPT. En nuestro grupo esto tiene un caso concreto: categorizar solicitudes de postventa de Banco Andino, que llegan con datos de clientes.
 
-## Objetivo
-
-Proteger nombres, correos electrónicos y teléfonos antes de que un modelo de lenguaje procese el texto: el vault sustituye el PII por tokens, persiste las parejas token ↔ valor, consulta al modelo solo con texto anonimizado y restaura los datos originales en la respuesta final.
-
-## Tecnologías
-
-- **Node.js** (CommonJS)
-- **Express** — API HTTP
-- **MongoDB Atlas** — persistencia con el **driver oficial** `mongodb` (sin Mongoose)
-- **OpenAI SDK** — Responses API (`client.responses.create`)
-- **dotenv** — variables de entorno
-
-## Requisitos previos
-
-- Node.js y npm instalados
-- Cuenta en MongoDB Atlas (o instancia compatible) y cadena de conexión
-- API key de OpenAI
-- Git (para clonar el repositorio)
-
-## Instalación
-
-```bash
-git clone <url-del-repositorio>
+Tecnologías
+Node.js (CommonJS) y Express para el servicio HTTP.
+MongoDB Atlas con el driver oficial mongodb para guardar las parejas token ↔ dato original.
+SDK oficial de OpenAI con la Responses API (client.responses.create).
+dotenv para leer las credenciales desde .env.
+Requisitos previos
+Node.js y npm.
+Git.
+Una cuenta en MongoDB Atlas con un clúster y su cadena de conexión (nosotros usamos el nivel gratuito M0).
+Una API key de OpenAI con saldo disponible. La API se cobra aparte de ChatGPT.
+Instalación
+git clone https://github.com/caroariasmorales-create/privacy-vault.git
 cd privacy-vault
 npm install
-```
+Variables de entorno
+Copia la plantilla y llena tus propios valores. El archivo .env está en .gitignore, así que nunca se sube al repositorio.
 
-## Configuración de variables de entorno
-
-Copia el archivo de ejemplo y completa los valores reales en local (nunca subas `.env` al repositorio):
-
-```bash
 cp .env.example .env
-```
+En Windows (PowerShell) el equivalente es Copy-Item .env.example .env.
 
-| Variable | Descripción |
-|----------|-------------|
-| `PORT` | Puerto HTTP del servidor (por ejemplo `3001`). |
-| `MONGODB_URI` | Cadena de conexión a MongoDB Atlas. |
-| `OPENAI_API_KEY` | Clave de API de OpenAI. |
-| `OPENAI_MODEL` | Modelo a usar (en `.env.example` aparece `gpt-6-luna` como referencia). |
-
-No incluyas secretos en commits, capturas ni documentación pública.
-
-## Ejecución
-
-```bash
-# Servidor (conecta a MongoDB y escucha en PORT)
+Variable	Para qué sirve
+PORT	Puerto del servidor. Usamos 3001.
+MONGODB_URI	Cadena de conexión de tu clúster de Atlas (incluye usuario y contraseña).
+OPENAI_API_KEY	Tu llave de la API de OpenAI.
+OPENAI_MODEL	Modelo a usar. Si no se define, el código usa gpt-6-luna, el más económico que encontramos para tareas simples.
+Cómo ejecutarlo
+# Levanta el servidor: primero se conecta a MongoDB y luego escucha en el puerto
 npm start
 
-# Prueba rápida de la clase OpenAIService (sin levantar Express)
+# Prueba solo la conexión con OpenAI, sin levantar el servidor
 npm run test:openai
-```
+Si la conexión a MongoDB falla, el servidor muestra el código y el mensaje del error sin imprimir la cadena de conexión. Nos pasó con un querySrv ENOTFOUND, que resultó ser una cadena mal copiada.
 
-## Endpoints
+Endpoints
+Todos responden en http://localhost:3001. Los ejemplos están escritos para PowerShell con curl.exe; en Linux o macOS basta con escribir curl.
 
-Base local: `http://localhost:3001`
+POST /anonymize
+Recibe un mensaje, reemplaza los datos personales por tokens y guarda cada pareja en MongoDB.
 
-### 1. `POST /anonymize`
+curl.exe -X POST http://localhost:3001/anonymize -H "Content-Type: application/json" -d '{"message":"oferta de trabajo para Dago Borda con email dborda@gmail.com y teléfono 3152319157"}'
+Respuesta que obtuvimos:
 
-Anonimiza PII en un mensaje y guarda las parejas en MongoDB.
+{"anonymizedMessage":"oferta de trabajo para NAME_e1be92e2b3a5 con email EMAIL_8004719c6ea5 y teléfono PHONE_40e83067b9cb"}
+Cada token es el prefijo del tipo de dato más los primeros 12 caracteres del SHA-256 del valor original. Elegimos este formato porque coincide exactamente con el ejemplo del enunciado: calculamos el hash de "Dago Borda" y empieza por e1be92e2b3a5.
 
-**Petición:**
+POST /deanonymize
+Recibe un texto con tokens y los cambia por los datos guardados en MongoDB. Si un token no existe, lo deja igual.
 
-```bash
-curl -X POST http://localhost:3001/anonymize \
-  -H "Content-Type: application/json" \
-  -d "{\"message\":\"oferta de trabajo para Dago Borda con email dborda@gmail.com y teléfono 3152319157\"}"
-```
+curl.exe -X POST http://localhost:3001/deanonymize -H "Content-Type: application/json" -d '{"anonymizedMessage":"oferta de trabajo para NAME_e1be92e2b3a5 con email EMAIL_8004719c6ea5 y telefono PHONE_40e83067b9cb"}'
+Respuesta que obtuvimos, incluso después de reiniciar el servidor:
 
-**Respuesta:**
+{"message":"oferta de trabajo para Dago Borda con email dborda@gmail.com y telefono 3152319157"}
+"telefono" sale sin tilde porque así viene en el curl del enunciado. El vault solo cambia tokens; el resto del texto lo deja tal cual.
 
-```json
-{
-  "anonymizedMessage": "oferta de trabajo para NAME_e1be92e2b3a5 con email EMAIL_8004719c6ea5 y teléfono PHONE_40e83067b9cb"
-}
-```
+POST /secureChatGPT
+Junta todo lo anterior: anonimiza el prompt, se lo envía a OpenAI, desanonimiza la respuesta y se la devuelve al cliente.
 
-### 2. `POST /deanonymize`
+curl.exe -X POST http://localhost:3001/secureChatGPT -H "Content-Type: application/json" -d '{"prompt":"por favor redacta un correo breve para Dago Borda invitandolo a una entrevista de trabajo. Su email es dborda@gmail.com y su telefono es 3152319157. Incluye sus datos de contacto al final."}'
+La respuesta llega como {"response": "..."} con el correo redactado por el modelo y los datos reales restaurados.
 
-Restaura el texto original a partir de tokens conocidos en MongoDB. Los tokens desconocidos se dejan igual.
+Cómo circula la información en /secureChatGPT
+El cliente envía un prompt que puede traer nombres, correos y teléfonos.
+El vault los cambia por tokens y guarda cada pareja en MongoDB.
+A OpenAI solo le llega el texto con tokens, junto con una instrucción de copiarlos exactamente igual.
+OpenAI responde usando esos tokens.
+El vault consulta MongoDB y devuelve cada token a su dato original.
+El cliente recibe la respuesta final.
+La consola del servidor imprime el prompt y la respuesta tal como viajan hacia y desde OpenAI, es decir, con tokens. Así se puede verificar qué salió del vault sin dejar datos personales en los registros.
 
-**Petición:**
+Limitaciones que encontramos
+Esto es una prueba de concepto y no protege todo. Lo que vimos en nuestras propias pruebas:
 
-```bash
-curl -X POST http://localhost:3001/deanonymize \
-  -H "Content-Type: application/json" \
-  -d "{\"anonymizedMessage\":\"oferta de trabajo para NAME_e1be92e2b3a5 con email EMAIL_8004719c6ea5 y telefono PHONE_40e83067b9cb\"}"
-```
-
-**Respuesta:**
-
-```json
-{
-  "message": "oferta de trabajo para Dago Borda con email dborda@gmail.com y teléfono 3152319157"
-}
-```
-
-### 3. `POST /secureChatGPT`
-
-Anonimiza el prompt, lo envía a OpenAI, desanonimiza la respuesta y la devuelve al cliente.
-
-**Petición:**
-
-```bash
-curl -X POST http://localhost:3001/secureChatGPT \
-  -H "Content-Type: application/json" \
-  -d "{\"prompt\":\"Escribe un mensaje corto de oferta laboral para Dago Borda (email dborda@gmail.com, teléfono 3152319157).\"}"
-```
-
-**Respuesta (forma):**
-
-```json
-{
-  "response": "..."
-}
-```
-
-La propiedad `response` contiene el texto del modelo ya desanonimizado (con el PII restaurado cuando los tokens existen en el vault).
-
-## Flujo de `/secureChatGPT`
-
-1. El **cliente** envía un `prompt` que puede contener PII.
-2. El **vault** anonimiza el texto (`anonimizarMensaje`) y persiste token ↔ valor en **MongoDB**.
-3. Solo el prompt **anonimizado** se envía a **OpenAI**, junto con instrucciones para no alterar los tokens (`NAME_…`, `EMAIL_…`, `PHONE_…`).
-4. OpenAI responde (idealmente reutilizando esos tokens).
-5. El vault **desanonimiza** la respuesta consultando MongoDB.
-6. El cliente recibe `{ "response": "..." }` con los datos originales restaurados.
-
-En la consola del servidor solo se registran el prompt y la respuesta **anonimizados**, nunca el texto original ni la respuesta final desanonimizada.
-
-## Limitaciones conocidas
-
-Resultados observados en pruebas reales de este taller:
-
-- La **regex de nombres** tokeniza cualquier palabra con mayúscula inicial (`Su`, `Incluye`, `Escribe`, `Bogota`, etc.), no solo nombres de persona. Eso introduce tokens espurios y **degrada la calidad** de las respuestas del modelo.
-- Un teléfono con formato internacional espaciado como `+57 315 231 9157` **no fue detectado** por la regex actual y **llegó sin anonimizar a OpenAI**.
-- Los valores originales se almacenan en **texto claro** en MongoDB (sin cifrado en reposo a nivel de aplicación).
-- Los tokens son un **SHA-256 truncado sin clave secreta** (no se usa HMAC): si alguien conoce el dato original, puede **recalcular** el mismo token.
+La regex de nombres se equivoca con frecuencia. Convierte en token cualquier palabra con mayúscula inicial. En nuestras pruebas tokenizó "Su", "Incluye", "Escribe" y "Bogota". El modelo tomó esos tokens como nombres de personas: firmó un correo como "Incluye" y escribió "de parte de Bogota".
+Hay datos que se escapan. Un teléfono escrito como +57 315 231 9157 no fue detectado y le llegó a OpenAI sin anonimizar. La regex solo reconoce secuencias continuas de 7 a 15 dígitos.
+MongoDB guarda los datos en texto claro. Los protegen el usuario y la lista de IP de Atlas, pero la aplicación no los cifra.
+Los tokens se pueden recalcular. Son un SHA-256 sin clave secreta (no usamos HMAC), así que quien adivine un dato puede obtener su token.
+Para usar algo así con datos reales de clientes habría que mejorar la detección (por ejemplo, con reconocimiento de entidades), cifrar lo que se guarda y medir con una muestra real cuántos datos se escapan.
